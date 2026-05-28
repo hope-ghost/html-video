@@ -476,7 +476,14 @@ function renderMessage(m, idx) {
   if (m.role === 'thinking') return `<div class="msg thinking">${esc(m.content || 'thinking')}</div>`;
   // assistant: split out the hv-options block (if any), markdown the rest
   const { prose, options } = parseHvOptions(m.content ?? '');
-  const optionsHtml = options ? renderOptionCard(options, m.pickedOption, idx) : '';
+  // m.pickedOption is in-memory only — wiped on reload. Recover it from
+  // history: any user turn AFTER this card is implicitly the answer.
+  let picked = m.pickedOption;
+  if (options && !picked) {
+    const nextUser = state.messages.slice(idx + 1).find((x) => x.role === 'user');
+    if (nextUser) picked = nextUser.content;
+  }
+  const optionsHtml = options ? renderOptionCard(options, picked, idx) : '';
   return `<div class="msg assistant">
     <div class="role">${esc(m.agent ?? 'agent')}</div>
     <div class="body">${md(prose)}${optionsHtml}</div>
@@ -532,7 +539,9 @@ function renderOptionCard(opts, picked, msgIdx) {
     const hint = o.hint ?? '';
     const isPicked = picked === label;
     const cls = 'opt' + (isPicked ? ' picked' : '');
-    const disabled = picked && !isPicked ? 'disabled' : '';
+    // Once the user has picked anything on this card, ALL buttons lock —
+    // including the picked one, so the same option can't fire twice.
+    const disabled = picked ? 'disabled' : '';
     return `<button class="${cls}" data-opt-msg="${msgIdx}" data-opt-i="${i}" ${disabled}>
       <span class="label">${esc(label)}</span>
       ${hint ? `<span class="hint">${esc(hint)}</span>` : ''}
@@ -619,10 +628,23 @@ function renderFramesStrip() {
     return;
   }
   strip.classList.add('has-frames');
+  // Each chip = label + mini iframe of the frame's actual HTML, transform-
+  // scaled so the 1920×1080 page fits in a ~180×100 thumb. sandbox blocks
+  // navigation; allow-scripts so any opening animation runs.
+  // Bust cache when frame content changes (re-renders point to a new
+  // versioned URL via `?v=<timestamp>` derived from project.updatedAt).
+  const ver = p.updatedAt ? new Date(p.updatedAt).getTime() : Date.now();
   const tabs = frames.map((f) => {
     const active = f.graphNodeId === state.activeFrameId ? 'active' : '';
+    const src = `/preview/${p.id}/frame/${encodeURIComponent(f.graphNodeId)}?thumb=1&v=${ver}`;
     return `<button class="frame-tab ${active}" data-fid="${esc(f.graphNodeId)}">
-      <span class="order">${String(f.order + 1).padStart(2, '0')}</span>${esc(f.graphNodeId)}
+      <div class="frame-thumb">
+        <iframe sandbox="allow-scripts" src="${src}" tabindex="-1" loading="lazy"></iframe>
+      </div>
+      <div class="frame-tab-label">
+        <span class="order">${String(f.order + 1).padStart(2, '0')}</span>
+        <span class="fid">${esc(f.graphNodeId)}</span>
+      </div>
     </button>`;
   }).join('');
   strip.innerHTML = `<span class="label">Frames</span>${tabs}

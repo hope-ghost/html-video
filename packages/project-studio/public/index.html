@@ -312,21 +312,39 @@
   .right-pane { display: grid; grid-template-rows: 1fr auto auto; background: var(--bg);
     overflow: hidden; }
   /* v0.8: frames timeline (multi-frame projects only) */
-  .frames-strip { display: none; padding: 10px 22px; gap: 8px; overflow-x: auto;
+  /* v0.8.4: each chip carries a real iframe thumbnail, scaled-down 16:9. */
+  .frames-strip { display: none; padding: 12px 22px; gap: 10px; overflow-x: auto;
     border-top: 1px solid var(--border); background: var(--bg-panel);
-    align-items: center; }
+    align-items: stretch; }
   .frames-strip.has-frames { display: flex; }
   .frames-strip .label { font-family: var(--font-mono); font-size: 10px;
     color: var(--text-muted); letter-spacing: .14em; text-transform: uppercase;
-    margin-right: 4px; }
+    margin-right: 4px; align-self: center; }
   .frames-strip button.frame-tab { background: var(--bg); border: 1px solid var(--border);
-    color: var(--text); padding: 6px 10px; border-radius: var(--radius-sm);
-    cursor: pointer; font-size: 11px; font-family: var(--font-mono);
-    white-space: nowrap; transition: border-color .15s; }
-  .frames-strip button.frame-tab:hover { border-color: var(--accent); }
+    color: var(--text); padding: 0; border-radius: var(--radius-sm);
+    cursor: pointer; transition: border-color .15s, transform .15s;
+    overflow: hidden; flex: 0 0 auto; display: flex; flex-direction: column;
+    width: 180px; }
+  .frames-strip button.frame-tab:hover { border-color: var(--accent);
+    transform: translateY(-1px); }
   .frames-strip button.frame-tab.active { border-color: var(--accent);
-    background: var(--bg-subtle); color: var(--accent); }
-  .frames-strip button.frame-tab .order { opacity: .5; margin-right: 6px; }
+    box-shadow: 0 0 0 2px var(--accent-soft); }
+  /* The actual mini render: iframe rendered at full size then transform-
+     scaled so a 1920×1080 page fits 178×100 (the 178 = 180 - 2px border). */
+  .frames-strip .frame-thumb { width: 178px; height: 100px; background: #000;
+    overflow: hidden; position: relative; }
+  .frames-strip .frame-thumb iframe { position: absolute; top: 0; left: 0;
+    width: 1920px; height: 1080px; border: 0;
+    transform: scale(calc(178 / 1920)); transform-origin: top left;
+    pointer-events: none; }
+  .frames-strip button.frame-tab .frame-tab-label { display: flex;
+    align-items: center; gap: 6px; padding: 6px 8px; font-size: 11px;
+    font-family: var(--font-mono); white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; background: var(--bg-panel); }
+  .frames-strip button.frame-tab.active .frame-tab-label { color: var(--accent); }
+  .frames-strip button.frame-tab .order { opacity: .5; }
+  .frames-strip button.frame-tab .fid { overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; }
   .frames-strip .frame-graph-btn { margin-left: auto; background: var(--bg);
     border: 1px solid var(--border); color: var(--text); padding: 6px 10px;
     border-radius: var(--radius-sm); cursor: pointer; font-size: 11px; }
