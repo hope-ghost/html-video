@@ -1294,6 +1294,9 @@ function renderFramesStrip() {
       }
       renderPreview();
       renderComposer();
+      // Refresh the right-pane Frame text editor to point at the newly
+      // active frame's data-hv-text values.
+      refreshTextFields();
     });
   });
   const gbtn = document.getElementById('btn-show-graph');
@@ -1337,13 +1340,36 @@ async function openGraphModal() {
 }
 
 // ============== text fields (data-hv-text editor) ==============
+/**
+ * Source the HTML the right-side editor reads. For multi-frame projects
+ * we follow `state.activeFrameId` so clicking a frame in the strip swaps
+ * the editor over to that frame; otherwise fall back to the whole-project
+ * preview HTML.
+ */
+async function fetchActiveFrameHtml() {
+  if (!state.selected) return null;
+  const fid = state.activeFrameId;
+  const url = fid
+    ? `/api/projects/${state.selected.id}/frames/${encodeURIComponent(fid)}/raw-html`
+    : `/api/projects/${state.selected.id}/raw-html`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    return await r.text();
+  } catch {
+    return null;
+  }
+}
+
 async function refreshTextFields() {
-  if (!state.selected || !state.selected.templateId) {
+  if (!state.selected) {
     state.textFields = [];
     renderTextFields();
     return;
   }
-  const html = await API.rawHtml(state.selected.id);
+  // We used to gate this on a templateId, but frames-mode projects are
+  // template-free and still have hv-text fields worth showing.
+  const html = await fetchActiveFrameHtml();
   if (!html) {
     state.textFields = [];
     renderTextFields();
@@ -1371,12 +1397,12 @@ function renderTextFields() {
     wrap.innerHTML = '<div class="text-empty">No project.</div>';
     return;
   }
-  if (!state.selected.templateId) {
-    wrap.innerHTML = '<div class="text-empty">Pick a template up top to see editable fields.</div>';
-    return;
-  }
   if (state.textFields.length === 0) {
-    wrap.innerHTML = `<div class="text-empty">No editable text yet.<br>Send a chat to generate the first version of the HTML, then per-frame text fields appear here.</div>`;
+    const hasFrames = (state.selected.frames?.length ?? 0) > 0;
+    const hint = hasFrames
+      ? `当前帧没有可编辑文字。<br>切到别的帧、或在画面里点 ✎ 编辑文字直接改。`
+      : `No editable text yet.<br>Send a chat to generate the first version of the HTML, then per-frame text fields appear here.`;
+    wrap.innerHTML = `<div class="text-empty">${hint}</div>`;
     return;
   }
   // Always render as textarea — agent decides text length, no hard cap.
@@ -1429,8 +1455,9 @@ async function commitTextEdits() {
     return;
   }
   setSaveState('saving…', 'saving');
-  // Fetch current preview HTML, replace each data-hv-text node's textContent
-  const html = await API.rawHtml(state.selected.id);
+  // Read the SAME source we'll write back to — the active frame's HTML
+  // when there is one, otherwise the whole-project preview.
+  const html = await fetchActiveFrameHtml();
   if (!html) { setSaveState('error', 'error'); return; }
   const doc = new DOMParser().parseFromString(html, 'text/html');
   for (const f of state.textFields) {
@@ -1440,12 +1467,36 @@ async function commitTextEdits() {
   }
   // Serialize back: include doctype because DOMParser drops it
   const serialized = '<!doctype html>\n' + doc.documentElement.outerHTML;
-  const r = await API.putRawHtml(state.selected.id, serialized);
-  if (r.error) {
+  const fid = state.activeFrameId;
+  const url = fid
+    ? `/api/projects/${state.selected.id}/frames/${encodeURIComponent(fid)}/raw-html`
+    : `/api/projects/${state.selected.id}/raw-html`;
+  let r;
+  try {
+    const res = await fetch(url, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ html: serialized }),
+    });
+    r = await res.json();
+  } catch (e) {
+    setSaveState('error: ' + (e?.message ?? e), 'error');
+    return;
+  }
+  if (r?.error) {
     setSaveState('error: ' + r.error, 'error');
     return;
   }
-  state.selected = r.project;
+  // Refresh project so frames-strip thumbnails cache-bust.
+  if (fid) {
+    try {
+      const pr = await API.getProject(state.selected.id);
+      state.selected = pr.project;
+      renderFramesStrip();
+    } catch {}
+  } else if (r?.project) {
+    state.selected = r.project;
+  }
   setSaveState('saved', 'saved');
   reloadPreview();
 }
