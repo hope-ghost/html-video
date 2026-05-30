@@ -903,7 +903,7 @@ function renderMessage(m, idx) {
     const formHtml = renderFormCard(formP.form, submitted, idx);
     return `<div class="msg assistant">
       <div class="role">${esc(m.agent ?? 'agent')}</div>
-      <div class="body">${md(formP.prose)}${formHtml}</div>
+      <div class="body">${md(sanitizeAssistantProse(formP.prose))}${formHtml}</div>
     </div>`;
   }
   const confirmP = parseHvConfirm(raw);
@@ -945,7 +945,7 @@ function renderMessage(m, idx) {
     const confirmHtml = renderConfirmCard(confirmP.confirm, resolved, idx);
     return `<div class="msg assistant">
       <div class="role">${esc(m.agent ?? 'agent')}</div>
-      <div class="body">${md(confirmP.prose)}${confirmHtml}</div>
+      <div class="body">${md(sanitizeAssistantProse(confirmP.prose))}${confirmHtml}</div>
     </div>`;
   }
   // Default: hv-options + prose
@@ -960,8 +960,34 @@ function renderMessage(m, idx) {
   const optionsHtml = options ? renderOptionCard(options, picked, idx) : '';
   return `<div class="msg assistant">
     <div class="role">${esc(m.agent ?? 'agent')}</div>
-    <div class="body">${md(prose)}${optionsHtml}</div>
+    <div class="body">${md(sanitizeAssistantProse(prose))}${optionsHtml}</div>
   </div>`;
+}
+
+/**
+ * Strip HTML / content-graph code blocks from assistant text before render.
+ * Streaming text comes in raw — without this the user sees a wall of CSS /
+ * JSX / HTML scrolling past. We replace each block with a one-line collapsed
+ * marker so they know something is being generated, but don't have to read
+ * 600 lines of style declarations.
+ *
+ * Acts on render only; the underlying message content is untouched, so the
+ * server's persisted "✓ frame X updated" summary still wins on reload.
+ */
+function sanitizeAssistantProse(text) {
+  if (!text) return text;
+  let out = text;
+  // ```html ... ``` (full block) — closed
+  out = out.replace(/```html(?:#[\w-]+)?\s*\n[\s\S]*?```/gi, '\n📄 *generating HTML…*\n');
+  // ```html ... (still open, mid-stream) — clip everything after the fence
+  out = out.replace(/```html(?:#[\w-]+)?\s*\n[\s\S]*$/i, '\n📄 *generating HTML…*');
+  // ```json#content-graph ...```
+  out = out.replace(/```json#content-graph\s*\n[\s\S]*?```/gi, '\n🧭 *planning storyboard…*\n');
+  out = out.replace(/```json#content-graph\s*\n[\s\S]*$/i, '\n🧭 *planning storyboard…*');
+  // ```hv-form / ```hv-confirm / ```hv-options blocks are parsed by their
+  // own renderers above; if we got here they slipped past — collapse them.
+  out = out.replace(/```hv-(?:form|confirm|options)\s*\n[\s\S]*?```/gi, '');
+  return out;
 }
 
 // === Markdown rendering ===
