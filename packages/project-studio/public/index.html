@@ -738,6 +738,23 @@
   .soundtrack-panel > summary::before { content: '▸'; display: inline-block;
     margin-right: 8px; color: var(--text-muted); transition: transform .15s; }
   .soundtrack-panel[open] > summary::before { transform: rotate(90deg); }
+  .soundtrack-panel > summary:hover { background: var(--bg); }
+  .soundtrack-badge { font-size: 10px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; color: var(--text-muted); border: 1px solid var(--border);
+    border-radius: 999px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
+  /* music style preset chips */
+  .st-presets { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+  .st-preset { font-size: 11px; padding: 4px 11px; border-radius: 999px; cursor: pointer;
+    background: var(--bg); border: 1px solid var(--border); color: var(--text);
+    transition: all .12s; }
+  .st-preset:hover { border-color: var(--accent); color: var(--accent); }
+  .st-preset.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+  /* narration field header with inline draft button */
+  .st-field-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .st-draft { font-size: 11px; padding: 3px 10px; border-radius: var(--radius-sm); cursor: pointer;
+    background: var(--bg); border: 1px solid var(--accent); color: var(--accent); transition: all .12s; }
+  .st-draft:hover:not(:disabled) { background: var(--accent); color: var(--accent-fg); }
+  .st-draft:disabled { opacity: .4; cursor: not-allowed; border-color: var(--border); color: var(--text-muted); }
   .soundtrack-body { padding: 4px 22px 16px; display: flex; flex-direction: column; gap: 12px; }
   .soundtrack-hint { font-size: 11px; color: var(--text-muted); margin: 0; }
   .soundtrack-field { display: flex; flex-direction: column; gap: 4px; }

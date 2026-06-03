@@ -11,6 +11,18 @@ document.addEventListener('hv-locale-change', () => {
 });
 document.documentElement.lang = getLocale();
 
+// Background-music style presets. Clicking a chip fills the prompt textarea
+// with a tuned English MiniMax prompt (the model follows English best); the
+// label is localized via i18n (soundtrack.preset_<key>). Still editable after.
+const MUSIC_PRESETS = [
+  { key: 'energetic', prompt: 'energetic upbeat electronic, driving beat, punchy synths, modern and confident' },
+  { key: 'calm',      prompt: 'calm ambient pad, soft piano, slow and soothing, gentle and warm' },
+  { key: 'tech',      prompt: 'sleek tech corporate, pulsing synth arpeggio, clean minimal beat, futuristic' },
+  { key: 'narrative', prompt: 'cinematic storytelling score, emotional strings, building piano, reflective' },
+  { key: 'minimal',   prompt: 'minimal lo-fi, sparse beat, mellow keys, understated background bed' },
+  { key: 'epic',      prompt: 'epic orchestral, powerful drums, soaring brass, dramatic and inspiring' },
+];
+
 const API = {
   projects: () => fetch('/api/projects').then(r => r.json()),
   createProject: b => fetch('/api/projects', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json()),
@@ -558,16 +570,21 @@ function renderMain() {
             <span class="grow"></span>
             <button class="reload-btn" id="btn-reload">${t('preview.reload')}</button>
           </div>
-          <details class="soundtrack-panel" id="soundtrack-panel">
-            <summary>${t('soundtrack.title')}</summary>
+          <details class="soundtrack-panel" id="soundtrack-panel" open>
+            <summary>${t('soundtrack.title')} <span class="soundtrack-badge">${t('soundtrack.optional')}</span></summary>
             <div class="soundtrack-body">
               <p class="soundtrack-hint">${t('soundtrack.hint')}</p>
               <label class="soundtrack-field">
                 <span>${t('soundtrack.music_label')}</span>
+                <div class="st-presets" id="st-music-presets">
+                  ${MUSIC_PRESETS.map((p) => `<button type="button" class="st-preset" data-prompt="${p.prompt}">${t('soundtrack.preset_' + p.key)}</button>`).join('')}
+                </div>
                 <textarea id="st-music-prompt" rows="2" placeholder="${t('soundtrack.music_placeholder')}"></textarea>
               </label>
               <label class="soundtrack-field">
-                <span>${t('soundtrack.narration_label')}</span>
+                <span class="st-field-head">${t('soundtrack.narration_label')}
+                  <button type="button" class="st-draft" id="btn-st-draft-narration">${t('soundtrack.draft_narration')}</button>
+                </span>
                 <textarea id="st-narration-text" rows="2" placeholder="${t('soundtrack.narration_placeholder')}"></textarea>
               </label>
               <div class="soundtrack-vols">
@@ -655,6 +672,47 @@ function wireSoundtrackPanel() {
   const clearBtn = document.getElementById('btn-st-clear');
   const statusEl = document.getElementById('st-status');
   const previewEl = document.getElementById('st-preview');
+  const draftBtn = document.getElementById('btn-st-draft-narration');
+
+  // Music style presets: click fills the prompt textarea (editable after).
+  document.querySelectorAll('#st-music-presets .st-preset').forEach((btn) => {
+    btn.onclick = () => {
+      musicPrompt.value = btn.dataset.prompt || '';
+      document.querySelectorAll('#st-music-presets .st-preset').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+    };
+  });
+
+  // Draft a narration script from the generated frames (same language as them).
+  if (draftBtn) {
+    const hasFrames = (state.selected?.frames?.length ?? 0) > 0;
+    draftBtn.disabled = !hasFrames;
+    draftBtn.title = hasFrames ? '' : t('soundtrack.draft_need_frames');
+    draftBtn.onclick = async () => {
+      if (!state.selected) return;
+      const label = draftBtn.textContent;
+      draftBtn.disabled = true;
+      draftBtn.textContent = t('soundtrack.drafting');
+      try {
+        const res = await fetch(`/api/projects/${state.selected.id}/draft-narration`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ agentId: state.selected.agentId ?? (state.agents.find((a) => a.available)?.id ?? 'anthropic-api') }),
+        });
+        const data = await res.json();
+        if (res.ok && data.narration) {
+          narrationText.value = data.narration;
+        } else {
+          statusEl.textContent = t('soundtrack.draft_failed', { message: data.error || `HTTP ${res.status}` });
+        }
+      } catch (e) {
+        statusEl.textContent = t('soundtrack.draft_failed', { message: (e?.message ?? e) });
+      } finally {
+        draftBtn.textContent = label;
+        draftBtn.disabled = (state.selected?.frames?.length ?? 0) === 0;
+      }
+    };
+  }
 
   // Restore previously generated soundtrack (prompt/text + audio previews).
   const st = state.selected?.soundtrack;

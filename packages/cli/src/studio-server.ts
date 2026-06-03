@@ -440,6 +440,52 @@ export async function startStudioServer(ctx: CliContext, port: number): Promise<
         return;
       }
 
+      // Draft a narration script from the project's already-generated frames.
+      // Reads the content-graph (per-frame text) and asks the agent for a short
+      // spoken voiceover IN THE SAME LANGUAGE as that text. Returns plain JSON
+      // { narration } — the user edits it before generating audio.
+      const draftNarrMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/draft-narration$/);
+      if (draftNarrMatch && draftNarrMatch[1] && m === 'POST') {
+        const projectId = draftNarrMatch[1];
+        try {
+          const body = (await readBody(req)) as { agentId?: string };
+          const graph = await ctx.orchestrator.readContentGraph(projectId);
+          if (!graph || !Array.isArray(graph.nodes) || graph.nodes.length === 0) {
+            return json(res, 400, { error: 'No frames yet — generate the video first.' });
+          }
+          if (!body.agentId) return json(res, 400, { error: 'No agent selected.' });
+          const agentDef = findAgent(body.agentId);
+          if (!agentDef) return json(res, 400, { error: `agent "${body.agentId}" not registered` });
+          const projectDir = await ctx.projects.ensureDir(projectId);
+          // Only TextNode carries copy; fall back to label/id for entity/data.
+          const nodeText = (n: typeof graph.nodes[number]): string =>
+            (n.kind === 'text' ? n.text : undefined) ?? n.label ?? n.id;
+          const frameLines = graph.nodes
+            .map((n, i) => `${i + 1}. ${nodeText(n).replace(/\n/g, ' ').slice(0, 200)}`)
+            .join('\n');
+          const prompt = [
+            `Write a short spoken NARRATION script for this ${graph.nodes.length}-frame video.`,
+            ``,
+            `Frames (in order):`,
+            frameLines,
+            ``,
+            graph.synopsis ? `Synopsis: ${graph.synopsis}` : '',
+            ``,
+            `Rules:`,
+            `- Write in the SAME LANGUAGE as the frame text above (Chinese frames → Chinese narration; English → English).`,
+            `- Natural, spoken voiceover — not a list. ~1 short sentence per frame, flowing together.`,
+            `- Keep it tight: it must be readable aloud within the video's length.`,
+            `- Plain text only. No markdown, no frame numbers, no quotes around it.`,
+          ].filter((l) => l !== undefined).join('\n');
+          const text = (await callAgentSimple(agentDef, prompt, projectDir)).trim();
+          return json(res, 200, { narration: text });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          process.stderr.write(`[studio:draft-narration] proj=${projectId} failed: ${msg}\n`);
+          return json(res, 500, { error: msg });
+        }
+      }
+
       // Clear a project's soundtrack (keeps the asset files, just drops the
       // references so the next export has no audio).
       const clearAudioMatch = url.pathname.match(/^\/api\/projects\/([^/]+)\/soundtrack$/);
@@ -1595,6 +1641,15 @@ function lastCardPickByPhase(history: ChatMessage[], phase: string): string | un
 }
 
 /** All free-text user replies during the content phase (between type-pick and style/format). */
+/** A short user turn that just nudges the flow forward ("continue", "go",
+ *  "下一步", "开始生成") rather than supplying video content. Such turns must
+ *  not be collected as content — otherwise they end up as on-screen text. */
+function isControlPhrase(t: string): boolean {
+  const s = t.trim().toLowerCase().replace(/[。.!！~\s]+$/u, '');
+  if (s.length > 12) return false; // real content is longer; keep it
+  return /^(继续|继续(刚刚|上次|之前)的?任务|接着|接着(来|做|生成)|下一步|开始(生成)?|生成(吧)?|go|continue|next|start|ok|好的?|行|走|动手|可以|确认)$/u.test(s);
+}
+
 function collectContentTurns(history: ChatMessage[]): string[] {
   const out: string[] = [];
   let inContent = false;
@@ -1619,6 +1674,10 @@ function collectContentTurns(history: ChatMessage[]): string[] {
     const t = m.content.trim();
     if (!t) continue;
     if (t.startsWith('[hv-')) continue; // skip marker messages
+    // Skip control phrases ("continue / next / go / 开始生成 …"). These are the
+    // user nudging the flow forward, NOT video content — otherwise e.g.
+    // "继续刚刚的任务" gets baked in as the opening frame's headline.
+    if (isControlPhrase(t)) continue;
     // Skip the "trimmed answer" that picks the type — it's the first user turn
     // immediately after the type card; keep only later ones.
     if (out.length === 0) {
