@@ -77,6 +77,14 @@
     overflow: hidden; text-overflow: ellipsis; }
   .agent-menu .agent-menu-item .mi-tag { font-size: 10px; color: var(--text-muted);
     font-family: var(--font-mono); }
+  /* "Sign in" button sits inside a disabled agent item (AMR-needs-login) but
+     must stay clickable + full-opacity. */
+  .agent-menu .agent-menu-item .mi-login { font-size: 10px; padding: 3px 9px; border-radius: 999px;
+    background: var(--accent); color: var(--accent-fg); cursor: pointer; display: inline-flex;
+    align-items: center; pointer-events: auto; opacity: 1; flex: 0 0 auto; user-select: none; }
+  .agent-menu .agent-menu-item:disabled .mi-login { opacity: 1; }
+  .agent-menu .agent-menu-item .mi-login:hover { background: var(--accent-hover); }
+  .agent-menu .agent-menu-item .mi-login.busy { opacity: .6; cursor: wait; }
   .toolbar select { background: var(--bg); border: 1px solid var(--border);
     color: var(--text); padding: 6px 10px; border-radius: var(--radius-sm);
     font-size: 12.5px; cursor: pointer; min-width: 160px; }

@@ -448,15 +448,25 @@ function renderAgentMenu() {
   menu.innerHTML = state.agents.map((a) => {
     const cur = a.id === currentId ? ' current' : '';
     const logo = AGENT_LOGOS[a.id] ? `<img src="${esc(AGENT_LOGOS[a.id])}" alt="" />` : '';
-    const tag = a.available ? '' : `<span class="mi-tag">${esc(t('settings.agent.unavailable'))}</span>`;
-    return `<button class="agent-menu-item${cur}" data-agent-id="${esc(a.id)}" ${a.available ? '' : 'disabled'}>
+    // AMR is "found but needs login": it can be made available by signing in,
+    // unlike a genuinely missing CLI. Offer a login button instead of just
+    // greying it out + the misleading "Not installed".
+    const needsLogin = !a.available && a.id === 'amr' && !!a.hint;
+    let tag = '';
+    if (a.available) tag = '';
+    else if (needsLogin) tag = `<span class="mi-login" role="button" tabindex="0" data-login-agent="${esc(a.id)}">${esc(t('agent.sign_in'))}</span>`;
+    else tag = `<span class="mi-tag">${esc(t('settings.agent.unavailable'))}</span>`;
+    const dis = a.available ? '' : 'disabled';
+    return `<button class="agent-menu-item${cur}" data-agent-id="${esc(a.id)}" ${dis} title="${esc(a.hint ?? '')}">
       <span class="mi-dot ${a.available ? 'ok' : ''}"></span>
       <span class="mi-logo">${logo}</span>
       <span class="mi-name">${esc(a.name)}</span>${tag}
     </button>`;
   }).join('');
   menu.querySelectorAll('.agent-menu-item').forEach((item) => {
-    item.onclick = async () => {
+    item.onclick = async (e) => {
+      // Login button inside a (disabled) item: don't treat as agent-select.
+      if (e.target.closest('.mi-login')) return;
       const aid = item.dataset.agentId;
       if (!state.selected || item.disabled) return;
       try {
@@ -468,6 +478,35 @@ function renderAgentMenu() {
       }
       closeAgentMenu();
       renderToolbar();
+    };
+  });
+  // AMR "Sign in" → spawn `vela login` server-side (opens the browser), then
+  // re-detect so the agent flips to available.
+  menu.querySelectorAll('.mi-login').forEach((btn) => {
+    btn.onclick = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (btn.dataset.busy === '1') return;
+      const label = btn.textContent;
+      btn.textContent = t('agent.signing_in');
+      btn.dataset.busy = '1';
+      btn.classList.add('busy');
+      try {
+        const res = await fetch(`/api/agents/${btn.dataset.loginAgent}/login`, { method: 'POST' });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+          toast(t('agent.signed_in'), 'success');
+          state.agents = (await fetch('/api/agents?force=1').then((r) => r.json())).agents ?? state.agents;
+          renderAgentMenu();
+          renderToolbar();
+        } else {
+          toast(data.error || t('agent.sign_in_failed'), 'error');
+          btn.textContent = label; delete btn.dataset.busy; btn.classList.remove('busy');
+        }
+      } catch (err) {
+        toast(`${err?.message ?? err}`, 'error');
+        btn.textContent = label; delete btn.dataset.busy; btn.classList.remove('busy');
+      }
     };
   });
 }

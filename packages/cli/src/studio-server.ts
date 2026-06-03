@@ -568,6 +568,38 @@ export async function startStudioServer(ctx: CliContext, port: number): Promise<
         return json(res, 200, { agents });
       }
 
+      // Agent login — currently AMR/vela only. Spawns `vela login`, which opens
+      // the browser for OAuth; we wait for the process to exit (auth complete or
+      // cancelled). The user signs in with their OWN Open Design account.
+      const loginMatch = url.pathname.match(/^\/api\/agents\/([^/]+)\/login$/);
+      if (loginMatch && loginMatch[1] && m === 'POST') {
+        const agentId = loginMatch[1];
+        if (agentId !== 'amr') return json(res, 400, { error: `agent "${agentId}" has no login flow` });
+        const def = findAgent(agentId);
+        if (!def) return json(res, 404, { error: `agent "${agentId}" not registered` });
+        const { resolveBin } = await import('@html-video/runtime');
+        const bin = await resolveBin(def);
+        if (!bin) return json(res, 400, { error: 'vela binary not found' });
+        try {
+          const { spawn } = await import('node:child_process');
+          const code = await new Promise<number>((resolveCode, rejectCode) => {
+            const child = spawn(bin, ['login'], { stdio: 'ignore' });
+            // vela login opens the browser itself; it exits once auth completes
+            // or is cancelled. Cap the wait so a never-finished login can't hang.
+            const timer = setTimeout(() => { try { child.kill('SIGTERM'); } catch { /* */ } rejectCode(new Error('login timed out (5 min)')); }, 5 * 60_000);
+            child.on('error', (e: Error) => { clearTimeout(timer); rejectCode(e); });
+            child.on('exit', (c: number | null) => { clearTimeout(timer); resolveCode(c ?? -1); });
+          });
+          if (code !== 0) return json(res, 400, { ok: false, error: `vela login exited with code ${code}` });
+          // Re-detect (force) so the agent flips to available immediately.
+          const agents = await detectAll({ force: true });
+          const amr = agents.find((a) => a.id === 'amr');
+          return json(res, 200, { ok: !!amr?.available, available: !!amr?.available, ...(amr?.hint && { hint: amr.hint }) });
+        } catch (err) {
+          return json(res, 500, { ok: false, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
+
       // Agent smoke test — fires a tiny prompt at the requested agent and
       // reports timing + bytes. Used by the Settings modal so the user can
       // confirm a CLI is actually responding (not just on PATH).
