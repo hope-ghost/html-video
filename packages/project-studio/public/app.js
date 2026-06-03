@@ -452,9 +452,11 @@ function renderAgentMenu() {
     // unlike a genuinely missing CLI. Offer a login button instead of just
     // greying it out + the misleading "Not installed".
     const needsLogin = !a.available && a.id === 'amr' && !!a.hint;
+    // Star the recommended agent (AMR) to draw the eye.
+    const star = a.id === 'amr' ? `<span class="mi-star" title="${esc(t('agent.recommended'))}">★</span>` : '';
     const inner = `<span class="mi-dot ${a.available ? 'ok' : ''}"></span>
       <span class="mi-logo">${logo}</span>
-      <span class="mi-name">${esc(a.name)}</span>`;
+      <span class="mi-name">${esc(a.name)}</span>${star}`;
     // AMR-needs-login: render the row as a DIV (not a button) so a real, separate
     // Sign-in <button> can live beside it — nesting a button inside a button is
     // invalid HTML and the outer one eats the inner one's clicks.
@@ -2537,6 +2539,7 @@ function wireModals() {
 // Real brand logos (SVG, copied from open-design/agent-icons). Served from
 // /agent-icons/<id>.svg. Agents without a brand logo fall back to a glyph.
 const AGENT_LOGOS = {
+  'anthropic-api': '/agent-icons/anthropic.svg',
   'claude': '/agent-icons/claude.svg',
   'cursor-agent': '/agent-icons/cursor-agent.svg',
   'codex': '/agent-icons/codex.svg',
