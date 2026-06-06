@@ -13,6 +13,7 @@ import {
   TemplateRegistry,
 } from '@html-video/core';
 import hfAdapter from '@html-video/adapter-hyperframes';
+import remotionAdapter, { remotionInstalled } from '@html-video/adapter-remotion';
 import { MediaConfigStore } from './media-config.js';
 
 export interface CliContext {
@@ -56,6 +57,11 @@ export async function bootstrap(opts: { cwd?: string } = {}): Promise<CliContext
 
   const engines = new EngineRegistry();
   engines.register(hfAdapter);
+  // Register Remotion only when its peer deps are actually installed, so the
+  // registry never lists an engine that would throw on render. (RFC-08)
+  if (remotionInstalled()) {
+    engines.register(remotionAdapter);
+  }
 
   const templates = new TemplateRegistry();
   const templatesDir = findTemplatesDir(projectRoot);
