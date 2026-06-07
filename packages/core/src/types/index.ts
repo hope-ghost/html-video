@@ -240,6 +240,13 @@ export interface TemplateMetadata {
   engine: EngineId;
   engine_version: string;
   source_entry: string;
+  /**
+   * Native-engine templates (RFC-08 Phase 2): `source_entry` is a bundle entry
+   * (e.g. a Remotion `entry.ts` calling `registerRoot`) rather than an HTML
+   * file. `compositionId` is the `<Composition id>` the adapter selects. Absent
+   * for the classic HTML+CSS+GSAP templates (the 27 hyperframes ones).
+   */
+  native?: { compositionId: string };
   category: TemplateCategory;
   subcategory?: string;
   tags: string[];
@@ -266,8 +273,19 @@ export interface TemplateMetadata {
 export interface TemplateRef {
   id: string;
   engine: EngineId;
+  /** Bridge mode: an HTML file. Native mode: a Remotion .tsx bundle entry. */
   sourcePath: string;
   variables?: Record<string, unknown>;
+  /**
+   * How the engine should consume `sourcePath`. Absent ⇒ 'bridge' (the legacy
+   * path: render the given HTML). 'native' ⇒ the engine bundles `sourcePath` as
+   * its own component entry and renders `nativeCompositionId` directly (e.g. a
+   * Remotion React-tsx data-animation template fed real data via `variables`).
+   * Only the Remotion adapter honors 'native' today (RFC-08 Phase 2).
+   */
+  mode?: 'bridge' | 'native';
+  /** Native mode only: the Remotion `<Composition id>` to select after bundling. */
+  nativeCompositionId?: string;
 }
 
 // ============================================================================
@@ -323,6 +341,24 @@ export interface FrameRecord {
   posterPath?: string;
   /** 0-based index in topo-sorted play order */
   order: number;
+  /**
+   * Per-frame engine override (RFC-08/09). Absent ⇒ inherit the project's
+   * template engine (hyperframes). Set to 'remotion' when the user explicitly
+   * opts this frame into a native motion-enhancement. The base render at
+   * `htmlPath` is always retained so toggling enhancement off is non-destructive.
+   */
+  engine?: EngineId;
+  /**
+   * When enhanced: which native template renders this frame (e.g.
+   * 'frame-data-rollup'). Resolved against the TemplateRegistry at export time.
+   */
+  nativeTemplateId?: string;
+  /**
+   * When enhanced: snapshot of the source content-graph DataNode's `data`,
+   * bound at enhance time and fed to the native template as inputProps. Kept on
+   * the frame so export is self-contained and doesn't re-read the graph.
+   */
+  data?: unknown;
 }
 
 /**

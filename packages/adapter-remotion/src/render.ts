@@ -48,8 +48,20 @@ function loadRemotion(): { bundle: Bundler; renderer: Renderer } {
 }
 
 // bundle() is an expensive webpack build — cache it across multi-frame renders.
-// Keyed by the bridge entry path (stable for a process). (RFC-08 §5 "bundle 复用")
-let bundleCache: { entry: string; serveUrl: string } | undefined;
+// Keyed by entry path so the bridge entry AND each native template entry each
+// bundle once and are reused across frames in one process. A video that enhances
+// three data frames with the same native template bundles it once, not thrice.
+// (RFC-08 §5 "bundle 复用" — generalized for Phase 2 native templates.)
+const bundleCache = new Map<string, string>(); // entryPath -> serveUrl
+
+async function bundleOnce(bundle: Bundler, entry: string, ctx: RenderContext): Promise<string> {
+  const cached = bundleCache.get(entry);
+  if (cached) return cached;
+  ctx.onProgress?.(15, 'bundling');
+  const serveUrl = await bundle({ entryPoint: entry });
+  bundleCache.set(entry, serveUrl);
+  return serveUrl;
+}
 
 /** Locate bridge/entry — present in src during dev (ts-node/tsx) and copied to
  * the package root `bridge/` when published. We ship the .tsx; Remotion bundles it. */
@@ -95,50 +107,36 @@ export function neutralizeBlockingResources(html: string): string {
   );
 }
 
-export async function render(input: RenderInput, ctx: RenderContext): Promise<RenderOutput> {
-  const t0 = Date.now();
-  const { bundle, renderer } = loadRemotion();
-  ctx.onProgress?.(5, 'preparing');
-
-  const { sourcePath } = input.template;
-  if (!sourcePath || !existsSync(sourcePath)) {
-    throw new EngineError('template-invalid', `Source HTML not found: ${sourcePath}`);
-  }
-  const { width, height } = input.config.resolution;
-  const fps = input.config.fps || 30;
-  const requested = input.config.duration === 'auto' ? 5 : Math.max(0.5, Number(input.config.duration));
-  const durationInFrames = Math.max(1, Math.round(requested * fps));
-
-  const outDir = dirname(input.config.outputPath);
-  await mkdir(outDir, { recursive: true });
-
-  // --- bundle (cached) ---
-  const entry = bridgeEntry();
-  if (!bundleCache || bundleCache.entry !== entry) {
-    ctx.onProgress?.(15, 'bundling');
-    const serveUrl = await bundle({ entryPoint: entry });
-    bundleCache = { entry, serveUrl };
-  }
-  const serveUrl = bundleCache.serveUrl;
-
-  // Read the HTML frame and pass its full source as inputProps. The bridge
-  // renders it via iframe srcdoc — no staticFile / publicDir / serve-path
-  // resolution, and srcdoc is same-origin so the per-frame animation seek works.
-  const rawHtml = await readFile(sourcePath, 'utf8');
-  const html = neutralizeBlockingResources(rawHtml);
+/**
+ * Shared select→render→atomic-rename, used by both the bridge and native paths.
+ * Selects `compositionId` on the bundle, overrides its metadata per call, renders
+ * to a tmp file, then renames into place (RFC-01 immutability).
+ */
+async function renderComposition(args: {
+  renderer: Renderer;
+  serveUrl: string;
+  compositionId: string;
+  inputProps: Record<string, unknown>;
+  width: number;
+  height: number;
+  fps: number;
+  durationInFrames: number;
+  config: RenderInput['config'];
+  ctx: RenderContext;
+}): Promise<void> {
+  const { renderer, serveUrl, compositionId, inputProps, width, height, fps, durationInFrames, config, ctx } = args;
 
   if (ctx.signal?.aborted) throw new EngineError('cancelled', 'Aborted');
 
   // --- select composition (override metadata per call) ---
   ctx.onProgress?.(30, 'selecting composition');
-  const inputProps = { html, width, height };
-  const composition = await renderer.selectComposition({ serveUrl, id: 'HtmlFrame', inputProps });
+  const composition = await renderer.selectComposition({ serveUrl, id: compositionId, inputProps });
   const comp = { ...composition, width, height, fps, durationInFrames };
 
   // --- render to tmp, then atomic rename (RFC-01 immutability) ---
   const tmpDir = await mkdtemp(join(tmpdir(), 'hv-remotion-'));
-  const tmpOut = join(tmpDir, `out.${input.config.format === 'webm' ? 'webm' : 'mp4'}`);
-  const codec = input.config.format === 'webm' ? 'vp8' : input.config.format === 'gif' ? 'gif' : 'h264';
+  const tmpOut = join(tmpDir, `out.${config.format === 'webm' ? 'webm' : 'mp4'}`);
+  const codec = config.format === 'webm' ? 'vp8' : config.format === 'gif' ? 'gif' : 'h264';
 
   try {
     await renderer.renderMedia({
@@ -153,15 +151,69 @@ export async function render(input: RenderInput, ctx: RenderContext): Promise<Re
       },
     });
     ctx.onProgress?.(92, 'finalising');
-    await rename(tmpOut, input.config.outputPath).catch(async () => {
+    await rename(tmpOut, config.outputPath).catch(async () => {
       // cross-device rename fails → copy fallback
-      await copyFile(tmpOut, input.config.outputPath);
+      await copyFile(tmpOut, config.outputPath);
     });
   } catch (err) {
     if (ctx.signal?.aborted) throw new EngineError('cancelled', 'Aborted');
     throw new EngineError('render-failed', `Remotion renderMedia failed: ${err instanceof Error ? err.message : err}`);
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+export async function render(input: RenderInput, ctx: RenderContext): Promise<RenderOutput> {
+  const t0 = Date.now();
+  const { bundle, renderer } = loadRemotion();
+  ctx.onProgress?.(5, 'preparing');
+
+  const { sourcePath } = input.template;
+  const isNative = input.template.mode === 'native';
+  if (!sourcePath || !existsSync(sourcePath)) {
+    throw new EngineError(
+      'template-invalid',
+      `${isNative ? 'Native template entry' : 'Source HTML'} not found: ${sourcePath}`,
+    );
+  }
+
+  const { width, height } = input.config.resolution;
+  const fps = input.config.fps || 30;
+  const requested = input.config.duration === 'auto' ? 5 : Math.max(0.5, Number(input.config.duration));
+  const durationInFrames = Math.max(1, Math.round(requested * fps));
+
+  const outDir = dirname(input.config.outputPath);
+  await mkdir(outDir, { recursive: true });
+
+  if (isNative) {
+    // --- Phase 2 native path: bundle the template's OWN entry and render its
+    // composition directly. The real data rides in as inputProps (the component
+    // animates props.data via interpolate/spring); no HTML, no neutralize. ---
+    const compositionId = input.template.nativeCompositionId;
+    if (!compositionId) {
+      throw new EngineError('template-invalid', 'Native template missing nativeCompositionId');
+    }
+    const serveUrl = await bundleOnce(bundle, sourcePath, ctx);
+    // The native component reads `data` (+ optional accent/background/foreground);
+    // width/height let calculateMetadata size the canvas for non-16:9 frames.
+    const { data, ...restVars } = input.variables ?? {};
+    const inputProps: Record<string, unknown> = { data, width, height, ...restVars };
+    await renderComposition({
+      renderer, serveUrl, compositionId, inputProps,
+      width, height, fps, durationInFrames, config: input.config, ctx,
+    });
+  } else {
+    // --- Phase 1 bridge path: render the given HTML on the bridge composition. ---
+    const serveUrl = await bundleOnce(bundle, bridgeEntry(), ctx);
+    // Read the HTML frame and pass its full source as inputProps. The bridge
+    // renders it via iframe srcdoc — no staticFile / publicDir / serve-path
+    // resolution, and srcdoc is same-origin so the per-frame animation seek works.
+    const rawHtml = await readFile(sourcePath, 'utf8');
+    const html = neutralizeBlockingResources(rawHtml);
+    await renderComposition({
+      renderer, serveUrl, compositionId: 'HtmlFrame', inputProps: { html, width, height },
+      width, height, fps, durationInFrames, config: input.config, ctx,
+    });
   }
 
   const st = await stat(input.config.outputPath);

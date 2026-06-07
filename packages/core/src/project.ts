@@ -11,10 +11,12 @@ import { randomUUID } from 'node:crypto';
 import { join, basename } from 'node:path';
 import type {
   Asset,
+  EngineId,
   FrameRecord,
   Project,
   ProjectStatus,
   TemplateMetadata,
+  TemplateRef,
 } from './types/index.js';
 import {
   type ContentGraph,
@@ -379,21 +381,25 @@ export class ProjectOrchestrator {
     if (project.frames && project.frames.length > 0) {
       const ordered = [...project.frames].sort((a, b) => a.order - b.order);
       const tmpl = project.templateId ? this.deps.templates.get(project.templateId) : null;
-      const engineId = tmpl?.engine ?? 'hyperframes';
-      const adapter = this.deps.engines.get(engineId);
+      const projectEngine = tmpl?.engine ?? 'hyperframes';
       const frameMp4s: string[] = [];
+      // Mixed engines across frames → the per-frame MP4s may carry different
+      // h264 params (hyperframes' libx264 vs Remotion's encoder), so a stream
+      // -c copy concat can stutter/corrupt. Re-encode the join in that case.
+      const enginesUsed = new Set(ordered.map((f) => f.engine ?? projectEngine));
+      const reencode = enginesUsed.size > 1;
 
       for (let i = 0; i < ordered.length; i++) {
         const f = ordered[i]!;
         const frameOut = join(projectDir, 'frames', `${String(i + 1).padStart(2, '0')}.mp4`);
+        const { engine: frameEngine, templateRef } = this.resolveFrameTemplateRef(f, projectEngine);
+        const adapter = this.deps.engines.get(frameEngine);
         await adapter.render(
           {
-            template: {
-              id: `frame-${f.graphNodeId}`,
-              engine: engineId,
-              sourcePath: f.htmlPath,
-            },
-            variables: project.variables,
+            template: templateRef,
+            // Native data templates read `data` from variables; bridge/hyperframes
+            // ignore it. Frame's own data (when enhanced) overrides project vars.
+            variables: f.data !== undefined ? { ...project.variables, data: f.data } : project.variables,
             config: {
               format: 'mp4',
               resolution: project.preferences.resolution ?? { width: 1920, height: 1080 },
@@ -417,7 +423,10 @@ export class ProjectOrchestrator {
         frameMp4s.push(frameOut);
       }
 
-      await concatFramesWithFfmpeg(frameMp4s, outputPath, projectDir);
+      await concatFramesWithFfmpeg(frameMp4s, outputPath, projectDir, {
+        reencode,
+        fps: project.preferences.fps ?? 60,
+      });
       const totalDur = ordered.reduce((s, f) => s + (f.durationSec || 0), 0);
       await this.applySoundtrack(project, outputPath, totalDur, args.onProgress);
       project.lastOutputMp4Path = outputPath;
@@ -458,6 +467,120 @@ export class ProjectOrchestrator {
     project.status = 'rendered';
     await this.deps.projects.save(project);
     return { project, outputPath };
+  }
+
+  /**
+   * Resolve which engine + TemplateRef render a single frame. A frame that the
+   * user has enhanced (engine='remotion' + nativeTemplateId) renders via the
+   * native template's .tsx entry; otherwise it's the classic per-frame HTML on
+   * the project's engine (hyperframes). The base `htmlPath` is always retained
+   * on the frame so un-enhancing is non-destructive. (RFC-08/09)
+   */
+  private resolveFrameTemplateRef(
+    f: FrameRecord,
+    projectEngine: EngineId,
+  ): { engine: EngineId; templateRef: TemplateRef } {
+    if (f.engine === 'remotion' && f.nativeTemplateId) {
+      const nt = this.deps.templates.get(f.nativeTemplateId);
+      if (!nt.native?.compositionId) {
+        throw new HtmlVideoError(
+          'template-invalid',
+          `Native template "${f.nativeTemplateId}" has no native.compositionId in its metadata`,
+        );
+      }
+      if (!nt.__dir) {
+        throw new HtmlVideoError(
+          'template-invalid',
+          `Native template "${f.nativeTemplateId}" has no __dir; was it loaded via TemplateRegistry?`,
+        );
+      }
+      return {
+        engine: 'remotion',
+        templateRef: {
+          id: `frame-${f.graphNodeId}`,
+          engine: 'remotion',
+          sourcePath: join(nt.__dir, nt.source_entry),
+          mode: 'native',
+          nativeCompositionId: nt.native.compositionId,
+        },
+      };
+    }
+    const engine = f.engine ?? projectEngine;
+    return {
+      engine,
+      templateRef: { id: `frame-${f.graphNodeId}`, engine, sourcePath: f.htmlPath },
+    };
+  }
+
+  /**
+   * Enhance one data frame with a native engine template (the user-initiated
+   * "motion enhancement" — RFC-08/09). Snapshots the source DataNode's `data`
+   * onto the frame and points it at the native template. Asserts the node is a
+   * `data` node and that its data fits the native template's expected shape, so
+   * export doesn't later render NaN bars. The frame's `htmlPath` is untouched,
+   * so {@link unenhanceFrame} fully reverts it.
+   */
+  async enhanceFrameNative(
+    projectId: string,
+    graphNodeId: string,
+    nativeTemplateId: string,
+  ): Promise<{ project: Project; frame: FrameRecord }> {
+    const project = await this.deps.projects.load(projectId);
+    const graph = await this.readContentGraph(projectId);
+    if (!graph) {
+      throw new HtmlVideoError('invalid-input', 'Project has no content graph');
+    }
+    const node = graph.nodes.find((n) => n.id === graphNodeId);
+    if (!node) {
+      throw new HtmlVideoError('invalid-input', `Graph node "${graphNodeId}" not found`);
+    }
+    if (node.kind !== 'data') {
+      throw new HtmlVideoError(
+        'invalid-input',
+        `Frame "${graphNodeId}" is a ${node.kind} node; native data enhancement only applies to data frames`,
+      );
+    }
+    const tmpl = this.deps.templates.get(nativeTemplateId); // throws if unknown
+    if (tmpl.engine !== 'remotion' || !tmpl.native?.compositionId) {
+      throw new HtmlVideoError(
+        'invalid-input',
+        `Template "${nativeTemplateId}" is not a native Remotion template`,
+      );
+    }
+    const data = normalizeRollupData((node as { data?: unknown }).data);
+
+    const frame = (project.frames ?? []).find((f) => f.graphNodeId === graphNodeId);
+    if (!frame) {
+      throw new HtmlVideoError(
+        'invalid-input',
+        `Frame "${graphNodeId}" has not been rendered yet (no FrameRecord)`,
+      );
+    }
+    frame.engine = 'remotion';
+    frame.nativeTemplateId = nativeTemplateId;
+    frame.data = data;
+    await this.deps.projects.save(project);
+    return { project, frame };
+  }
+
+  /**
+   * Revert a frame's native enhancement back to its base hyperframes HTML.
+   * Clears the three enhance fields; `htmlPath` was never touched. (RFC-08/09)
+   */
+  async unenhanceFrame(
+    projectId: string,
+    graphNodeId: string,
+  ): Promise<{ project: Project; frame: FrameRecord }> {
+    const project = await this.deps.projects.load(projectId);
+    const frame = (project.frames ?? []).find((f) => f.graphNodeId === graphNodeId);
+    if (!frame) {
+      throw new HtmlVideoError('invalid-input', `Frame "${graphNodeId}" not found`);
+    }
+    delete frame.engine;
+    delete frame.nativeTemplateId;
+    delete frame.data;
+    await this.deps.projects.save(project);
+    return { project, frame };
   }
 
   /**
@@ -513,8 +636,60 @@ export class ProjectOrchestrator {
 // ---------------------------------------------------------------------------
 
 /**
- * Concatenate per-frame MP4 files into a single output using ffmpeg's concat
- * demuxer. Falls back to a no-op stub when frame list is empty (caller checks).
+ * Coerce a content-graph DataNode's free-form `data` into the shape the native
+ * frame-data-rollup template expects ({ title?, unit?, items: {label,value}[] }).
+ * DataNode.data is `unknown`, so an enhanced frame could otherwise feed NaN bars
+ * to the renderer. Accepts either the already-shaped object or a bare array of
+ * {label,value}. Throws a clear error rather than rendering garbage.
+ */
+function normalizeRollupData(raw: unknown): { title?: string; unit?: string; items: { label: string; value: number }[] } {
+  const asItems = (arr: unknown): { label: string; value: number }[] => {
+    if (!Array.isArray(arr)) {
+      throw new HtmlVideoError(
+        'invalid-input',
+        'Data frame has no `items` array to animate; expected {items:[{label,value}]}',
+      );
+    }
+    const items = arr
+      .map((it) => {
+        const o = (it ?? {}) as Record<string, unknown>;
+        const label = String(o.label ?? o.name ?? '');
+        const value = Number(o.value ?? o.y ?? o.count);
+        return { label, value };
+      })
+      .filter((it) => it.label !== '' && Number.isFinite(it.value));
+    if (items.length === 0) {
+      throw new HtmlVideoError(
+        'invalid-input',
+        'Data frame items had no usable {label, numeric value} pairs',
+      );
+    }
+    return items;
+  };
+
+  if (Array.isArray(raw)) return { items: asItems(raw) };
+  const o = (raw ?? {}) as Record<string, unknown>;
+  const out: { title?: string; unit?: string; items: { label: string; value: number }[] } = {
+    items: asItems(o.items),
+  };
+  if (typeof o.title === 'string') out.title = o.title;
+  if (typeof o.unit === 'string') out.unit = o.unit;
+  return out;
+}
+
+/**
+ * Concatenate per-frame MP4 files into a single output with ffmpeg.
+ *
+ * Two strategies:
+ *  - Single-engine (default): the concat **demuxer** with `-c copy`. All frames
+ *    came from one engine so their h264 streams are byte-compatible — fast, no
+ *    re-encode.
+ *  - Mixed-engine (`opts.reencode`): a hyperframes frame next to a native
+ *    Remotion frame can differ in profile/GOP/**timebase**. The concat demuxer
+ *    assumes continuous timestamps across segments and mis-accumulates the
+ *    Remotion segment's PTS, ballooning the total duration. So we feed each
+ *    segment as an independent input and join with the concat **filter**, which
+ *    rebuilds a clean timeline, then re-encode to a uniform h264.
  *
  * Requires `ffmpeg` on PATH. Throws with a friendly hint if missing.
  */
@@ -522,6 +697,7 @@ async function concatFramesWithFfmpeg(
   frameMp4s: string[],
   outputPath: string,
   workDir: string,
+  opts: { reencode?: boolean; fps?: number } = {},
 ): Promise<void> {
   if (frameMp4s.length === 0) {
     throw new HtmlVideoError('render-failed', 'No frames to concat');
@@ -530,28 +706,35 @@ async function concatFramesWithFfmpeg(
   const { join } = await import('node:path');
   const { spawn } = await import('node:child_process');
 
-  const listPath = join(workDir, 'frames', 'concat.txt');
-  // ffmpeg concat demuxer wants each line: file '<absolute path>'
-  const list = frameMp4s.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
-  await writeFile(listPath, list, 'utf8');
+  const fps = opts.fps ?? 60;
+  let ffmpegArgs: string[];
+
+  if (opts.reencode) {
+    // concat FILTER: independent `-i` per segment + filter rebuilds the timeline.
+    const n = frameMp4s.length;
+    const inputs = frameMp4s.flatMap((p) => ['-i', p]);
+    const filter = `${frameMp4s.map((_, i) => `[${i}:v]`).join('')}concat=n=${n}:v=1:a=0[v]`;
+    ffmpegArgs = [
+      '-y',
+      ...inputs,
+      '-filter_complex', filter,
+      '-map', '[v]',
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-r', String(fps),
+      '-movflags', '+faststart',
+      outputPath,
+    ];
+  } else {
+    // concat DEMUXER + stream copy: needs the list file.
+    const listPath = join(workDir, 'frames', 'concat.txt');
+    const list = frameMp4s.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n');
+    await writeFile(listPath, list, 'utf8');
+    ffmpegArgs = ['-y', '-f', 'concat', '-safe', '0', '-i', listPath, '-c', 'copy', outputPath];
+  }
 
   await new Promise<void>((resolveFn, reject) => {
-    const proc = spawn(
-      'ffmpeg',
-      [
-        '-y',
-        '-f',
-        'concat',
-        '-safe',
-        '0',
-        '-i',
-        listPath,
-        '-c',
-        'copy',
-        outputPath,
-      ],
-      { stdio: ['ignore', 'pipe', 'pipe'] },
-    );
+    const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     proc.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
