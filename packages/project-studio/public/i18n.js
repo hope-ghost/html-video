@@ -68,6 +68,22 @@ const DICT = {
     'chat.placeholder.plan_graph': '🧭 *planning storyboard…*',
     'chat.empty_reply':
       '⚠️ The agent returned an empty reply. Try rephrasing your request — e.g. tell it the brand / topic / 1-2 concrete details, or which kind of frame you want first.',
+    'chat.empty.example1':
+      'Warm-grain magazine outro: Open Design — design that evolves itself',
+    'chat.empty.example2':
+      'Cyberpunk glitch title saying SYSTEM ONLINE, neon cyan/magenta',
+    'chat.empty.example3':
+      'Swiss-grid data card: Templates 231, Skills 15, Systems 150, Craft 11',
+
+    'sidebar.no_template': 'no template',
+    'sidebar.menu.more': 'More',
+    'footer.no_template': 'no template',
+    'footer.template_label': 'template',
+    'frames.editing_this': 'Editing this frame',
+    'attachment.remove': 'Remove',
+    'preview.save_failed': 'Save failed: {message}',
+    'preview.saved_changes': 'Saved {count} change(s)',
+    'app.init_failed': 'Init failed: {message}',
 
     'preview.placeholder.pick_project': 'Pick a project first.',
     'preview.placeholder.pick_template':
@@ -110,7 +126,10 @@ const DICT = {
     'export.stream_interrupted': 'Export stream interrupted: {message}',
     'export.failed_short': 'Export failed: {message}',
     'export.title': '🎬 MP4 ready',
-    'export.reveal': 'Reveal in Finder',
+    'export.reveal': 'Reveal in folder',
+    'export.reveal_mac': 'Reveal in Finder',
+    'export.reveal_win': 'Show in File Explorer',
+    'export.reveal_linux': 'Show in file manager',
     'export.copy_path': 'Copy path',
     'export.copied': 'Path copied',
     'export.copy_failed': 'Copy failed: {message}',
@@ -318,6 +337,22 @@ const DICT = {
     'chat.placeholder.plan_graph': '🧭 *规划故事板…*',
     'chat.empty_reply':
       '⚠️ Agent 返回为空。试着重新表述 — 比如告诉它品牌 / 主题 / 1-2 个具体点，或者你想要什么类型的帧。',
+    'chat.empty.example1':
+      '暖颗粒杂志风片尾：Open Design — 会自我进化的设计',
+    'chat.empty.example2':
+      '赛博朋克故障标题 SYSTEM ONLINE，霓虹青/品红',
+    'chat.empty.example3':
+      '瑞士网格数据卡：模板 231、技能 15、系统 150、工艺 11',
+
+    'sidebar.no_template': '无模板',
+    'sidebar.menu.more': '更多',
+    'footer.no_template': '无模板',
+    'footer.template_label': '模板',
+    'frames.editing_this': '正在编辑此帧',
+    'attachment.remove': '移除',
+    'preview.save_failed': '保存失败：{message}',
+    'preview.saved_changes': '已保存 {count} 处修改',
+    'app.init_failed': '初始化失败：{message}',
 
     'preview.placeholder.pick_project': '先选一个项目。',
     'preview.placeholder.pick_template':
@@ -359,7 +394,10 @@ const DICT = {
     'export.stream_interrupted': '导出流中断：{message}',
     'export.failed_short': '导出失败：{message}',
     'export.title': '🎬 MP4 已就绪',
-    'export.reveal': '在 Finder 中显示',
+    'export.reveal': '在文件夹中显示',
+    'export.reveal_mac': '在 Finder 中显示',
+    'export.reveal_win': '在资源管理器中显示',
+    'export.reveal_linux': '在文件管理器中显示',
     'export.copy_path': '复制路径',
     'export.copied': '已复制路径',
     'export.copy_failed': '复制失败：{message}',
@@ -525,6 +563,8 @@ let _locale = resolveInitialLocale();
 
 function resolveInitialLocale() {
   try {
+    const urlLang = new URLSearchParams(location.search).get('lang');
+    if (urlLang && AVAILABLE_LOCALES.includes(urlLang)) return urlLang;
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored && AVAILABLE_LOCALES.includes(stored)) return stored;
   } catch {
@@ -591,4 +631,12 @@ export function t(key, params) {
     }
   }
   return s;
+}
+
+/** OS-aware "reveal exported file" label. */
+export function tRevealInFolder() {
+  const p = (navigator.platform || '').toLowerCase();
+  if (p.includes('win')) return t('export.reveal_win');
+  if (p.includes('mac')) return t('export.reveal_mac');
+  return t('export.reveal_linux');
 }

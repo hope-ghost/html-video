@@ -25,6 +25,7 @@ import {
   DEFAULT_FRAME_DURATION_SEC,
 } from '@html-video/content-graph';
 import { HtmlVideoError } from './errors.js';
+import { ffmpegMissingMessage, resolveFfmpegBinary } from './ffmpeg.js';
 import type { AssetStore } from './asset-store.js';
 import type { EngineRegistry, ProjectStore, TemplateRegistry } from './registry.js';
 
@@ -790,7 +791,7 @@ async function concatFramesWithFfmpeg(
   }
 
   await new Promise<void>((resolveFn, reject) => {
-    const proc = spawn('ffmpeg', ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(resolveFfmpegBinary(), ffmpegArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     proc.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
@@ -800,7 +801,7 @@ async function concatFramesWithFfmpeg(
         reject(
           new HtmlVideoError(
             'render-failed',
-            'ffmpeg not found on PATH. Install with `brew install ffmpeg` (macOS) or your platform equivalent.',
+            ffmpegMissingMessage(),
           ),
         );
       } else {
@@ -898,14 +899,14 @@ async function muxAudioWithFfmpeg(args: {
   ];
 
   await new Promise<void>((resolveFn, reject) => {
-    const proc = spawn('ffmpeg', ffArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const proc = spawn(resolveFfmpegBinary(), ffArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     proc.stderr.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8'); });
     proc.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'ENOENT') {
         reject(new HtmlVideoError(
           'render-failed',
-          'ffmpeg not found on PATH. Install with `brew install ffmpeg` (macOS) or your platform equivalent.',
+          ffmpegMissingMessage(),
         ));
       } else {
         reject(err);

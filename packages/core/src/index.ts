@@ -19,3 +19,6 @@ export {
   generateMusic,
 } from './minimax.js';
 export type { MinimaxCredentials, MinimaxAudioResult } from './minimax.js';
+export { resolveFfmpegBinary, ffmpegMissingMessage } from './ffmpeg.js';
+export { localizeTemplateFields } from './template-i18n.js';
+export type { TemplateDisplayLocale, TemplateLocaleFields } from './template-i18n.js';

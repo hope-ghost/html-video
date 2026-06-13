@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import type { CliContext } from './context.js';
-import { AssetStore, generateTts, generateMusic } from '@html-video/core';
+import { AssetStore, generateTts, generateMusic, localizeTemplateFields } from '@html-video/core';
 import { extractUrls, fetchSource } from './fetch-source.js';
 import { detectAll, findAgent, spawnAgent } from '@html-video/runtime';
 
@@ -107,6 +107,7 @@ export async function startStudioServer(ctx: CliContext, port: number): Promise<
 
       // List engines + templates
       if (url.pathname === '/api/templates' && m === 'GET') {
+        const locale = url.searchParams.get('locale');
         return json(res, 200, {
           templates: ctx.templates.list().map((t) => {
             // Decide how the gallery should preview this template:
@@ -116,15 +117,16 @@ export async function startStudioServer(ctx: CliContext, port: number): Promise<
             //    built, v0.9) to show anything, so a live iframe is blank.
             //    Fall back to the shipped poster image instead.
             const { mode, posterUrl } = templatePreviewMode(t);
+            const localized = localizeTemplateFields(t, locale);
             return {
               id: t.id,
-              name: t.name,
-              description: t.description,
+              name: localized.name,
+              description: localized.description,
               engine: t.engine,
               source_entry: t.source_entry,
               category: t.category,
               tags: t.tags,
-              best_for: t.best_for,
+              best_for: localized.best_for,
               inputs_schema: t.inputs.schema,
               inputs_examples: t.inputs.examples,
               license: t.license,

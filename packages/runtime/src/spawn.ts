@@ -1,5 +1,6 @@
 import { spawn as cpSpawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { resolveBin, spawnShellOptions } from './detect.js';
 import type { AgentDef, AgentEvent, AgentInvokeContext, SpawnHandle } from './types.js';
 
 /**
@@ -71,99 +72,108 @@ export function spawnAgent(opts: SpawnOptions): SpawnHandle {
 
   const args = def.buildArgs(prompt, context);
   const env = { ...process.env, ...(def.env ?? {}) };
+  let child: ReturnType<typeof cpSpawn> | null = null;
 
-  const child = cpSpawn(def.bin, args, {
-    cwd: context.cwd,
-    env,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  const done = (async () => {
+    const binPath = await resolveBin(def);
+    if (!binPath) {
+      onEvent?.({
+        type: 'error',
+        message: `${def.name}: CLI "${def.bin}" not found on PATH. Install it and restart Studio.`,
+      });
+      onEvent?.({ type: 'message_end', reason: 'error' });
+      return { exitCode: -1, signal: null as NodeJS.Signals | null };
+    }
 
-  if (def.promptViaStdin && child.stdin) {
-    child.stdin.write(prompt);
-    child.stdin.end();
-  }
+    child = cpSpawn(binPath, args, {
+      cwd: context.cwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...spawnShellOptions(binPath),
+    });
 
-  let stdoutBuf = '';
-  let stderrBuf = '';
+    if (def.promptViaStdin && child.stdin) {
+      child.stdin.write(prompt);
+      child.stdin.end();
+    }
 
-  // Decode through StringDecoder, not chunk.toString('utf8'): a multi-byte
-  // UTF-8 character (e.g. any CJK glyph is 3 bytes) can straddle two `data`
-  // chunks, and decoding each chunk independently turns the split bytes into
-  // U+FFFD replacement chars (the "◆◆◆" mojibake in issue #9). StringDecoder
-  // buffers an incomplete trailing sequence until the next chunk completes it.
-  const outDecoder = new StringDecoder('utf8');
-  const errDecoder = new StringDecoder('utf8');
+    let stderrBuf = '';
 
-  child.stdout?.on('data', (chunk: Buffer) => {
-    const text = outDecoder.write(chunk);
-    if (!text) return;
-    stdoutBuf += text;
-    if (def.streamFormat === 'plain') {
-      onEvent?.({ type: 'text', chunk: text });
-    } else if (def.streamFormat === 'claude-stream' || def.streamFormat === 'json-event-stream') {
-      // v0.2 hook: parse NDJSON and emit structured events
-      const lines = text.split('\n');
-      for (const line of lines) {
-        if (!line.trim()) continue;
-        try {
-          const obj = JSON.parse(line);
-          if (typeof obj === 'object' && obj && 'type' in obj) {
-            // claude stream-json events have richer shape; treat unknown as text
-            onEvent?.({ type: 'text', chunk: JSON.stringify(obj) + '\n' });
+    // Decode through StringDecoder, not chunk.toString('utf8'): a multi-byte
+    // UTF-8 character (e.g. any CJK glyph is 3 bytes) can straddle two `data`
+    // chunks, and decoding each chunk independently turns the split bytes into
+    // U+FFFD replacement chars (the "◆◆◆" mojibake in issue #9). StringDecoder
+    // buffers an incomplete trailing sequence until the next chunk completes it.
+    const outDecoder = new StringDecoder('utf8');
+    const errDecoder = new StringDecoder('utf8');
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      const text = outDecoder.write(chunk);
+      if (!text) return;
+      if (def.streamFormat === 'plain') {
+        onEvent?.({ type: 'text', chunk: text });
+      } else if (def.streamFormat === 'claude-stream' || def.streamFormat === 'json-event-stream') {
+        const lines = text.split('\n');
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const obj = JSON.parse(line);
+            if (typeof obj === 'object' && obj && 'type' in obj) {
+              onEvent?.({ type: 'text', chunk: JSON.stringify(obj) + '\n' });
+            }
+          } catch {
+            onEvent?.({ type: 'text', chunk: line + '\n' });
           }
-        } catch {
-          onEvent?.({ type: 'text', chunk: line + '\n' });
         }
       }
+    });
+
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderrBuf += errDecoder.write(chunk);
+    });
+
+    if (opts.signal) {
+      opts.signal.addEventListener('abort', () => {
+        try {
+          child?.kill('SIGTERM');
+        } catch {
+          /* ignore */
+        }
+      });
     }
-  });
 
-  child.stderr?.on('data', (chunk: Buffer) => {
-    stderrBuf += errDecoder.write(chunk);
-  });
-
-  if (opts.signal) {
-    opts.signal.addEventListener('abort', () => {
-      try {
-        child.kill('SIGTERM');
-      } catch {
-        // ignore
-      }
+    return new Promise<{ exitCode: number; signal: NodeJS.Signals | null }>((resolve) => {
+      child!.on('close', (code, signal) => {
+        const outTail = outDecoder.end();
+        if (outTail && def.streamFormat === 'plain') {
+          onEvent?.({ type: 'text', chunk: outTail });
+        }
+        stderrBuf += errDecoder.end();
+        if (code !== 0) {
+          const winSpawnFail = process.platform === 'win32' && (code === -4058 || code === 1);
+          const hint = winSpawnFail && !stderrBuf.trim()
+            ? `${def.name}: CLI could not run on Windows (reinstall the agent CLI or pick another agent)`
+            : `agent exit code ${code}${stderrBuf ? `: ${stderrBuf.slice(0, 500)}` : ''}`;
+          onEvent?.({ type: 'error', message: hint });
+        }
+        onEvent?.({ type: 'message_end', reason: code === 0 ? 'ok' : 'error' });
+        resolve({ exitCode: code ?? 0, signal });
+      });
+      child!.on('error', (err) => {
+        onEvent?.({ type: 'error', message: err.message });
+        onEvent?.({ type: 'message_end', reason: 'error' });
+        resolve({ exitCode: -1, signal: null });
+      });
     });
-  }
-
-  const done = new Promise<{ exitCode: number; signal: NodeJS.Signals | null }>((resolve) => {
-    child.on('close', (code, signal) => {
-      // Flush any bytes the decoders were still holding (an incomplete trailing
-      // multi-byte sequence). Normally empty on a clean exit.
-      const outTail = outDecoder.end();
-      if (outTail) {
-        stdoutBuf += outTail;
-        if (def.streamFormat === 'plain') onEvent?.({ type: 'text', chunk: outTail });
-      }
-      stderrBuf += errDecoder.end();
-      if (code !== 0) {
-        onEvent?.({
-          type: 'error',
-          message: `agent exit code ${code}${stderrBuf ? `: ${stderrBuf.slice(0, 500)}` : ''}`,
-        });
-      }
-      onEvent?.({ type: 'message_end', reason: code === 0 ? 'ok' : 'error' });
-      resolve({ exitCode: code ?? 0, signal });
-    });
-    child.on('error', (err) => {
-      onEvent?.({ type: 'error', message: err.message });
-      resolve({ exitCode: -1, signal: null });
-    });
-  });
+  })();
 
   return {
-    pid: child.pid ?? 0,
+    pid: 0,
     stop: () => {
       try {
-        child.kill('SIGTERM');
+        child?.kill('SIGTERM');
       } catch {
-        // ignore
+        /* ignore */
       }
     },
     done,

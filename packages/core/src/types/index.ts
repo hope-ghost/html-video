@@ -266,6 +266,11 @@ export interface TemplateMetadata {
   preview: { poster: string; loop?: string; thumbnail?: string };
   performance?: { reference_render: PerformanceRef };
   share_optimized_for?: string[];
+  /**
+   * Optional localized display fields (RFC-02). `zh` matches studio locale.
+   * Central fallbacks live in `template-i18n.ts` when omitted here.
+   */
+  i18n?: Partial<Record<'zh', { name?: string; description?: string; best_for?: string[] }>>;
   /** Internal: filesystem location of the template directory (set by registry) */
   __dir?: string;
 }

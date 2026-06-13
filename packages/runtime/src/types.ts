@@ -13,6 +13,8 @@ export interface AgentDef {
    *  pseudo name that doctor() displays but never spawns — set it to something
    *  recognisable like "anthropic-api". */
   bin: string;
+  /** Additional CLI names tried on PATH before binFallbacks (e.g. `agent` vs `cursor-agent`). */
+  altBins?: string[];
   /** Absolute-path fallbacks tried (in order) when `bin` is not on PATH.
    *  Used for agents shipped inside another app bundle — e.g. AMR's `vela`
    *  lives in Open Design.app, not on PATH. List real candidate paths; the
@@ -54,6 +56,8 @@ export interface AgentDef {
   env?: Record<string, string>;
   /** Where to find install instructions */
   installUrl?: string;
+  /** Shown in studio when the binary is not found (desktop app ≠ CLI). */
+  unavailableHint?: string;
   /**
    * Runtime kind (default `child`).
    *   - `child`: spawn `bin` as a child process (the v0.1 behaviour)

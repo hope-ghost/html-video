@@ -1,13 +1,49 @@
 import { execFile } from 'node:child_process';
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, existsSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { AGENT_DEFS } from './registry.js';
 import type { AgentDef, DetectedAgent } from './types.js';
 
 const exec = promisify(execFile);
 
+/** npm global bins on Windows ship as foo + foo.cmd; spawn needs the .cmd. */
+export function normalizeWindowsBin(binPath: string): string {
+  if (process.platform !== 'win32') return binPath;
+  const lower = binPath.toLowerCase();
+  if (lower.endsWith('.exe') || lower.endsWith('.cmd') || lower.endsWith('.bat')) {
+    return binPath;
+  }
+  const cmd = `${binPath}.cmd`;
+  if (existsSync(cmd)) return cmd;
+  const exe = `${binPath}.exe`;
+  if (existsSync(exe)) return exe;
+  return binPath;
+}
+
+/** Child-process options for Windows .cmd/.bat npm shims. */
+export function spawnShellOptions(binPath: string): { shell?: boolean } {
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(binPath)) {
+    return { shell: true };
+  }
+  return {};
+}
+
 async function which(bin: string): Promise<string | null> {
   try {
+    if (process.platform === 'win32') {
+      const { stdout } = await exec('where.exe', [bin], { timeout: 2000 });
+      const lines = stdout
+        .trim()
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      const cmd = lines.find((l) => l.toLowerCase().endsWith('.cmd'));
+      if (cmd) return cmd;
+      const exe = lines.find((l) => l.toLowerCase().endsWith('.exe'));
+      if (exe) return exe;
+      const first = lines[0];
+      return first ? normalizeWindowsBin(first) : null;
+    }
     const { stdout } = await exec('which', [bin], { timeout: 2000 });
     return stdout.trim() || null;
   } catch {
@@ -17,12 +53,14 @@ async function which(bin: string): Promise<string | null> {
 
 /** PATH → static binFallbacks → async resolveBinFallback (e.g. bundled npm pkg). */
 export async function resolveBin(def: AgentDef): Promise<string | null> {
-  const onPath = await which(def.bin);
-  if (onPath) return onPath;
+  for (const name of [def.bin, ...(def.altBins ?? [])]) {
+    const onPath = await which(name);
+    if (onPath) return normalizeWindowsBin(onPath);
+  }
   for (const candidate of def.binFallbacks ?? []) {
     try {
-      accessSync(candidate, constants.X_OK);
-      return candidate;
+      accessSync(candidate, constants.F_OK);
+      return normalizeWindowsBin(candidate);
     } catch {
       /* not there / not executable — try next */
     }
@@ -31,8 +69,8 @@ export async function resolveBin(def: AgentDef): Promise<string | null> {
     try {
       const resolved = await def.resolveBinFallback();
       if (resolved) {
-        accessSync(resolved, constants.X_OK);
-        return resolved;
+        accessSync(resolved, constants.F_OK);
+        return normalizeWindowsBin(resolved);
       }
     } catch {
       /* resolver threw or path not runnable — treat as not found */
@@ -43,7 +81,10 @@ export async function resolveBin(def: AgentDef): Promise<string | null> {
 
 async function probeVersion(bin: string, args: string[]): Promise<string | null> {
   try {
-    const { stdout } = await exec(bin, args, { timeout: 5000 });
+    const { stdout } = await exec(bin, args, {
+      timeout: 5000,
+      ...spawnShellOptions(bin),
+    });
     return stdout.trim().split('\n')[0] ?? null;
   } catch {
     return null;
@@ -70,6 +111,7 @@ export async function detectOne(def: AgentDef): Promise<DetectedAgent> {
       name: def.name,
       bin: def.bin,
       available: false,
+      ...(def.unavailableHint !== undefined && { hint: def.unavailableHint }),
       ...(def.installUrl !== undefined && { installUrl: def.installUrl }),
     };
   }

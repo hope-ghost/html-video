@@ -1,10 +1,11 @@
 // html-video studio v0.4 — chat-driven HTML + template gallery + text-node editor
 
-import { t, getLocale, setLocale, AVAILABLE_LOCALES } from './i18n.js';
+import { t, getLocale, setLocale, AVAILABLE_LOCALES, tRevealInFolder } from './i18n.js';
 
 // Re-render whole UI on language change.
-document.addEventListener('hv-locale-change', () => {
+document.addEventListener('hv-locale-change', async () => {
   document.documentElement.lang = getLocale();
+  await refreshTemplates();
   if (typeof renderToolbar === 'function') renderToolbar();
   if (typeof renderMain === 'function') renderMain();
   if (typeof renderSidebar === 'function') renderSidebar();
@@ -40,7 +41,7 @@ const API = {
   getProject: id => fetch(`/api/projects/${id}`).then(r => r.json()),
   patchProject: (id, b) => fetch(`/api/projects/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b) }).then(r => r.json()),
   deleteProject: id => fetch(`/api/projects/${id}`, { method: 'DELETE' }).then(r => r.json()),
-  templates: () => fetch('/api/templates').then(r => r.json()),
+  templates: () => fetch(`/api/templates?locale=${encodeURIComponent(getLocale())}`).then(r => r.json()),
   agents: () => fetch('/api/agents').then(r => r.json()),
   setTemplate: (id, tid) => fetch(`/api/projects/${id}/template`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ template_id: tid }) }).then(r => r.json()),
   setAgent: (id, aid, model) => fetch(`/api/projects/${id}/agent`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ agent_id: aid, ...(model !== undefined && { agent_model: model }) }) }).then(r => r.json()),
@@ -407,8 +408,8 @@ function renderSidebar() {
     div.className = 'project-row' + (p.id === state.selectedId ? ' active' : '');
     div.innerHTML = `
       <div class="name">${esc(p.name)}</div>
-      <div class="meta">${p.template_id ? esc(p.template_id) : 'no template'} · ${p.status}</div>
-      <button class="row-menu-btn" title="More" data-pid="${esc(p.id)}">⋯</button>
+      <div class="meta">${p.template_id ? esc(p.template_id) : t('sidebar.no_template')} · ${p.status}</div>
+      <button class="row-menu-btn" title="${t('sidebar.menu.more')}" data-pid="${esc(p.id)}">⋯</button>
     `;
     div.onclick = (e) => {
       // Ignore clicks that started inside the menu button.
@@ -866,10 +867,10 @@ function renderMain() {
         <div class="graph-modal" id="graph-modal">
           <div class="panel">
             <header>
-              <h3>Content graph</h3>
+              <h3>${t('graph.title')}</h3>
               <span class="grow"></span>
-              <button class="download-btn" id="graph-download">⬇ Download JSON</button>
-              <button class="close-btn" id="graph-close">✕</button>
+              <button class="download-btn" id="graph-download">${t('graph.download')}</button>
+              <button class="close-btn" id="graph-close">${t('graph.close')}</button>
             </header>
             <pre id="graph-json"></pre>
           </div>
@@ -1221,7 +1222,7 @@ function renderAttachments() {
     return `<span class="att-chip">
       ${thumb}
       <span class="name" title="${esc(a.name)}">${esc(a.name)}</span>
-      <button data-i="${i}" title="Remove">×</button>
+      <button data-i="${i}" title="${t('attachment.remove')}">×</button>
     </span>`;
   }).join('');
   wrap.querySelectorAll('button[data-i]').forEach(btn => {
@@ -1314,9 +1315,9 @@ function renderFooter() {
   const fs = document.getElementById('footer-status');
   if (!fs) return;
   if (p) {
-    fs.innerHTML = `<b>${esc(p.name)}</b> · ${p.templateId ? `template <b>${esc(p.templateId)}</b>` : '<i>no template</i>'} · ${p.status}`;
+    fs.innerHTML = `<b>${esc(p.name)}</b> · ${p.templateId ? `${t('footer.template_label')} <b>${esc(p.templateId)}</b>` : `<i>${t('footer.no_template')}</i>`} · ${p.status}`;
   } else {
-    fs.textContent = 'no project';
+    fs.textContent = t('app.no_project');
   }
 }
 
@@ -1329,9 +1330,9 @@ function renderChatLog() {
       <div style="font-weight:500;margin-bottom:6px;">${t('chat.empty.title')}</div>
       ${t('chat.empty.body')}
       <div class="examples">
-        <b>"Warm-grain magazine outro: Open Design — design that evolves itself"</b>
-        <b>"Cyberpunk glitch title saying SYSTEM ONLINE, neon cyan/magenta"</b>
-        <b>"Swiss-grid data card: Templates 231, Skills 15, Systems 150, Craft 11"</b>
+        <b>"${t('chat.empty.example1')}"</b>
+        <b>"${t('chat.empty.example2')}"</b>
+        <b>"${t('chat.empty.example3')}"</b>
       </div>
     </div></div>`;
     return;
@@ -1535,7 +1536,7 @@ function renderMessage(m, idx) {
       <div class="export-title">${t('export.title')}</div>
       <div class="export-path"><code>${esc(path)}</code></div>
       <div class="export-actions">
-        <button class="btn-reveal" data-export-action="reveal">${t('export.reveal')}</button>
+        <button class="btn-reveal" data-export-action="reveal">${tRevealInFolder()}</button>
         <button class="btn-copy-path" data-export-action="copy">${t('export.copy_path')}</button>
       </div>
       <div class="export-fname">${esc(fname)}</div>
@@ -2066,7 +2067,7 @@ async function commitInlineTextEdits(iframe) {
     if (!r.ok) throw new Error(`fetch failed ${r.status}`);
     serverHtml = await r.text();
   } catch (e) {
-    toast(`保存失败：${e.message}`, 'error');
+    toast(t('preview.save_failed', { message: e.message }), 'error');
     return;
   }
   const parser = new DOMParser();
@@ -2099,7 +2100,7 @@ async function commitInlineTextEdits(iframe) {
       body: JSON.stringify({ html: out }),
     });
     if (!r.ok) throw new Error(`save failed ${r.status}`);
-    toast(`已保存 ${changed} 处修改`, 'success');
+    toast(t('preview.saved_changes', { count: changed }), 'success');
     // Refresh local project state so frames-strip thumbnails cache-bust.
     if (fid) {
       const pr = await API.getProject(projectId);
@@ -2107,7 +2108,7 @@ async function commitInlineTextEdits(iframe) {
       renderFramesStrip();
     }
   } catch (e) {
-    toast(`保存失败：${e.message}`, 'error');
+    toast(t('preview.save_failed', { message: e.message }), 'error');
   }
 }
 
@@ -2193,7 +2194,7 @@ function renderFramesStrip() {
       <div class="frame-thumb">
         ${thumbInner}
         ${enhanceCtl}
-        ${isFocus ? '<div class="focus-mark" title="正在编辑此帧">✎</div>' : ''}
+        ${isFocus ? `<div class="focus-mark" title="${esc(t('frames.editing_this'))}">✎</div>` : ''}
       </div>
       <div class="frame-tab-label">
         <span class="order">${String(f.order + 1).padStart(2, '0')}</span>
@@ -2251,14 +2252,14 @@ async function openGraphModal() {
   try {
     const r = await fetch(`/api/projects/${state.selected.id}/content-graph`);
     if (!r.ok) {
-      pre.textContent = '(no graph for this project)';
+      pre.textContent = t('graph.empty');
     } else {
       const { graph } = await r.json();
       pre.textContent = JSON.stringify(graph, null, 2);
       state.lastGraph = graph;
     }
   } catch (e) {
-    pre.textContent = `error loading graph: ${e.message}`;
+    pre.textContent = t('graph.error', { message: e.message });
   }
   modal.classList.add('open');
   const close = document.getElementById('graph-close');
@@ -2943,7 +2944,7 @@ function agentIconHtml(id) {
 const AGENT_DESC = {
   'anthropic-api': 'Direct Messages API · streams reliably',
   'claude': 'Claude Code (claude --print)',
-  'cursor-agent': 'Cursor command line',
+  'cursor-agent': 'Cursor CLI (agent) — separate from Cursor desktop IDE',
   'codex': 'Codex CLI (codex exec)',
   'hermes': 'Hermes ACP CLI',
 };
@@ -3250,6 +3251,6 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 init().catch((e) => {
   console.error('[hv-studio] init failed:', e);
-  try { toast(`init 失败：${e.message}`, 'error'); } catch {}
+  try { toast(t('app.init_failed', { message: e.message }), 'error'); } catch {}
 });
 
