@@ -4,6 +4,8 @@
   <img src="docs/assets/hero.png" alt="html-video — 在你的电脑上，把 HTML 变成视频" width="100%" />
 </p>
 
+> **Fork 说明：** 本仓库为 [nexu-io/html-video](https://github.com/nexu-io/html-video) 的个人 fork，由 [hope-ghost](https://github.com/hope-ghost) 维护。含 Windows 本地改动（bundled ffmpeg、Studio 启动脚本、模板中文元数据）。上游为 Open Design 团队项目。
+
 > **在你的电脑上，把 HTML 变成视频。** 接上你本地的 coding agent（Open Design · Windsurf CLI · Trae CLI · Claude Code · Cursor · Codex · Gemini · Grok · Qwen · OpenCode · Copilot · Aider · Hermes · 或 Anthropic API），描述一个视频，或者**直接粘一个文章链接 / GitHub 仓库**，agent 就把它变成一支多帧、带动画的视频 —— 然后就在你这台机器上渲染成真实 MP4。一个 agent 循环、可插拔渲染引擎、精选模板库、可选 AI 配乐。Apache-2.0，无单次渲染费用，不绑定厂商。
 
 <p align="center">
@@ -22,7 +24,7 @@
 </p>
 
 <p align="center">
-  <b>Open Design 团队官方出品</b> · <a href="https://open-design.ai">open-design.ai</a>
+  上游：<a href="https://github.com/nexu-io/html-video">nexu-io/html-video</a> · <a href="https://open-design.ai">Open Design</a> 团队项目
 </p>
 
 <p align="center"><a href="README.md">English</a> · <b>简体中文</b></p>
@@ -161,7 +163,7 @@ Agent：好，我读完了《用嘴剪视频的时代来了？…》这篇文章
 |---|---|---|
 | **Node.js** | 20+ | `node --version` |
 | **pnpm** | 9+ | `pnpm --version` |
-| **ffmpeg** | 任意较新版本 | `ffmpeg -version` |
+| **ffmpeg** | 任意较新版本（Windows 可选 — 通过 `ffmpeg-static` 内置） | `ffmpeg -version` |
 | **Chromium**（或 Playwright 浏览器）| — | `npx playwright install chromium` |
 
 默认渲染引擎用无头 Chromium 录制带动画的 HTML，再用 ffmpeg（libx264）编码为 MP4。如果没有系统安装的 Chromium，装 Playwright 内置的：
@@ -179,6 +181,8 @@ node packages/cli/dist/bin.js studio    # 在 http://127.0.0.1:3071 打开 studi
 ```
 
 在 studio 里：挑一个模板（或直接描述视频 / 粘链接），跟 agent 对话，逐帧改文案，加配乐，导出 MP4。
+
+**Windows：** 执行 `pnpm install && pnpm -r build` 后，双击仓库根目录的 `start-studio.bat`（或 `启动studio.bat`）。脚本会把 bundled ffmpeg 加入 `PATH`，并在 http://127.0.0.1:3071 打开 Studio。
 
 CLI 工具：
 
@@ -283,6 +287,10 @@ research/                  RFC（引擎适配器 / 模板元数据 / agent skill
 
 [Apache-2.0](LICENSE)
 
-## 出品
+## 维护
 
-[nexu-io](https://github.com/nexu-io) —— [Open Design](https://github.com/nexu-io/open-design) 背后的团队。加入 [Discord](https://github.com/nexu-io/open-design#community) · 关注 [@nexudotio](https://x.com/nexudotio)。
+[hope-ghost](https://github.com/hope-ghost) —— 本 fork。
+
+## 上游
+
+最初由 [nexu-io](https://github.com/nexu-io) 创建 —— [Open Design](https://github.com/nexu-io/open-design) 背后的团队。加入 [Discord](https://github.com/nexu-io/open-design#community) · 关注 [@nexudotio](https://x.com/nexudotio)。

@@ -4,10 +4,10 @@
   "private": true,
   "description": "HTML→Video meta-layer for coding agents",
   "license": "Apache-2.0",
-  "homepage": "https://github.com/nexu-io/html-video",
+  "homepage": "https://github.com/hope-ghost/html-video",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/nexu-io/html-video.git"
+    "url": "git+https://github.com/hope-ghost/html-video.git"
   },
   "engines": {
     "node": ">=20",

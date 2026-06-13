@@ -4,6 +4,8 @@
   <img src="docs/assets/hero.png" alt="html-video — HTML becomes video, on your laptop" width="100%" />
 </p>
 
+> **Fork:** Personal fork of [nexu-io/html-video](https://github.com/nexu-io/html-video), maintained by [hope-ghost](https://github.com/hope-ghost). Includes Windows-focused changes (bundled ffmpeg, studio launch scripts, Chinese template metadata). Upstream is an Open Design team project.
+
 > **HTML becomes video — on your laptop.** Bring your local coding agent (Open Design · Windsurf CLI · Trae CLI · Claude Code · Cursor · Codex · Gemini · Grok · Qwen · OpenCode · Copilot · Aider · Hermes · or the Anthropic API). Describe a video, or **paste an article link / GitHub repo**, and the agent turns it into a multi-frame, fully animated video — then renders it to a real MP4 right on your machine. One agent loop, pluggable rendering engines, a curated template gallery, optional AI soundtrack. Apache-2.0, no per-render fees, no vendor lock-in.
 
 <p align="center">
@@ -23,7 +25,7 @@
 </p>
 
 <p align="center">
-  <b>An official project by the <a href="https://open-design.ai">Open Design</a> team</b> · <a href="https://open-design.ai">open-design.ai</a>
+  Upstream: <a href="https://github.com/nexu-io/html-video">nexu-io/html-video</a> · an <a href="https://open-design.ai">Open Design</a> team project
 </p>
 
 <p align="center"><b>English</b> · <a href="README.zh-CN.md">简体中文</a></p>
@@ -162,7 +164,7 @@ Whatever the source, it becomes the material the video is actually built from �
 |---|---|---|
 | **Node.js** | 20+ | `node --version` |
 | **pnpm** | 9+ | `pnpm --version` |
-| **ffmpeg** | Any recent | `ffmpeg -version` |
+| **ffmpeg** | Any recent (optional on Windows — bundled via `ffmpeg-static`) | `ffmpeg -version` |
 | **Chromium** (or Playwright browsers) | — | `npx playwright install chromium` |
 
 The default rendering engine records animated HTML in a headless Chromium browser, then uses ffmpeg (libx264) to encode MP4. Install Playwright's Chromium if you don't have a system install:
@@ -180,6 +182,8 @@ node packages/cli/dist/bin.js studio    # opens the studio at http://127.0.0.1:3
 ```
 
 In the studio: pick a template (or just describe a video / paste a link), chat with your agent, edit per-frame text, add a soundtrack, and export MP4.
+
+**Windows:** after `pnpm install && pnpm -r build`, double-click `start-studio.bat` (or `启动studio.bat`) in the repo root. The script prepends bundled ffmpeg to `PATH` and opens the studio at http://127.0.0.1:3071.
 
 CLI utilities:
 
@@ -284,6 +288,10 @@ research/                  RFCs (engine adapter / template metadata / agent skil
 
 [Apache-2.0](LICENSE)
 
-## Built by
+## Maintained by
 
-[nexu-io](https://github.com/nexu-io) — the team behind [Open Design](https://github.com/nexu-io/open-design). Join the [Discord](https://github.com/nexu-io/open-design#community) · follow [@nexudotio](https://x.com/nexudotio).
+[hope-ghost](https://github.com/hope-ghost) — this fork.
+
+## Upstream
+
+Originally created by [nexu-io](https://github.com/nexu-io) — the team behind [Open Design](https://github.com/nexu-io/open-design). Join the [Discord](https://github.com/nexu-io/open-design#community) · follow [@nexudotio](https://x.com/nexudotio).
